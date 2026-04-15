@@ -1,5 +1,6 @@
 ﻿using Pathfinding.Components;
 using Unity.Burst;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics.Authoring;
@@ -19,19 +20,18 @@ namespace Pathfinding.Systems
         {
             SystemAPI.GetSingleton<PhysicsDebugDisplayData>();
 
-            foreach (var path in SystemAPI.Query<DynamicBuffer<PathBuffer>>())
+            foreach (DynamicBuffer<PathBuffer> path in SystemAPI.Query<DynamicBuffer<PathBuffer>>())
             {
                 if (path.IsEmpty)
                 {
                     continue;
                 }
 
-                var pathArray = path.AsNativeArray().Reinterpret<float3>();
-
-                for (var i = 0; i < pathArray.Length - 1; i++)
+                NativeArray<float3> pathArray = path.AsNativeArray().Reinterpret<float3>();
+                for (int i = 0; i < (pathArray.Length - 1); i++)
                 {
-                    var pos = pathArray[i];
-                    var nextPos = pathArray[i + 1];
+                    float3 pos = pathArray[i];
+                    float3 nextPos = pathArray[i + 1];
                     PhysicsDebugDisplaySystem.Line(pos, nextPos, Unity.DebugDisplay.ColorIndex.Green);
                 }
             }

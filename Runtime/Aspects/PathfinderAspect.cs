@@ -1,9 +1,12 @@
 ﻿using Pathfinding.Components;
+using System;
 using Unity.Entities;
 using Unity.Mathematics;
 
 namespace Pathfinding.Aspects
 {
+    //todo remove, aspects are deprecated and will be eleminated soon
+    [Obsolete("Obsolete")]
     public readonly partial struct PathfinderAspect : IAspect
     {
         public readonly RefRW<Pathfinder> pathfinderRef;
@@ -18,7 +21,7 @@ namespace Pathfinding.Aspects
         /// <param name="to">Final position for navmesh query</param>
         public void FindPath(float3 from, float3 to)
         {
-            ref var pf = ref pathfinderRef.ValueRW;
+            ref Pathfinder pf = ref pathfinderRef.ValueRW;
             pf.from = from;
             pf.to = to;
             pathfinderEnabledRef.ValueRW = true;

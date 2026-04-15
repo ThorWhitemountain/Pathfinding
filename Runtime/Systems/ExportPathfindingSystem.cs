@@ -13,19 +13,22 @@ namespace Pathfinding.Systems
 
         public void OnCreate(ref SystemState state)
         {
-            _query = SystemAPI.QueryBuilder().WithAll<Pathfinder, PathBuffer>()
-                .WithOptions(EntityQueryOptions.IgnoreComponentEnabledState).Build();
+            state.RequireForUpdate<PathResultsSingleton>();
+            _query = SystemAPI.QueryBuilder()
+                .WithAll<Pathfinder, PathBuffer>()
+                .WithOptions(EntityQueryOptions.IgnoreComponentEnabledState)
+                .Build();
         }
 
         public void OnUpdate(ref SystemState state)
         {
-            var pathResults = SystemAPI.GetSingleton<PathResultsSingleton>();
+            PathResultsSingleton pathResults = SystemAPI.GetSingleton<PathResultsSingleton>();
 
-            state.Dependency = new Job()
+            state.Dependency = new Job
             {
                 findPathReadHandle = SystemAPI.GetComponentTypeHandle<Pathfinder>(true),
                 pathBufferWriteHandle = SystemAPI.GetBufferTypeHandle<PathBuffer>(),
-                pathResults = pathResults.results,
+                pathResults = pathResults.results
             }.ScheduleParallel(_query, state.Dependency);
         }
 
@@ -42,27 +45,29 @@ namespace Pathfinding.Systems
             public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask,
                 in v128 chunkEnabledMask)
             {
-                var findPaths = chunk.GetComponentDataPtrRO(ref findPathReadHandle);
-                var pathBufferAccessor = chunk.GetBufferAccessor(ref pathBufferWriteHandle);
+                Pathfinder* findPaths = chunk.GetComponentDataPtrRO(ref findPathReadHandle);
+                BufferAccessor<PathBuffer> pathBufferAccessor = chunk.GetBufferAccessor(ref pathBufferWriteHandle);
 
-                for (var i = 0; i < chunk.Count; i++)
+                for (int i = 0; i < chunk.Count; i++)
                 {
-                    ref var findPath = ref findPaths[i];
+                    ref Pathfinder findPath = ref findPaths[i];
 
                     if (findPath.pathId == 0 || !pathResults.ContainsKey(findPath.pathId))
+                    {
                         continue;
+                    }
 
-                    var result = pathResults[findPath.pathId];
+                    PathQueryResult result = pathResults[findPath.pathId];
                     findPath.pathStatus = result.status;
 
                     //Debug.Log($"Found path result writing {result.PathLength}");
 
-                    var buffer = pathBufferAccessor[i];
+                    DynamicBuffer<PathBuffer> buffer = pathBufferAccessor[i];
                     buffer.Clear();
 
-                    for (var ind = 0; ind < result.pathLength; ind++)
+                    for (int ind = 0; ind < result.pathLength; ind++)
                     {
-                        buffer.Add(new() { position = result.path[ind].position });
+                        buffer.Add(new PathBuffer { position = result.path[ind].position });
                     }
                 }
             }

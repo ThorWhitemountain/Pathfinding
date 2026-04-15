@@ -4,9 +4,10 @@ namespace Pathfinding.Data
 {
     public unsafe struct PathQueryResult
     {
+        public int pathLength;
+
         public NavMeshLocation* path;
 
-        public int pathLength;
         public PathQueryStatus status;
     }
 }

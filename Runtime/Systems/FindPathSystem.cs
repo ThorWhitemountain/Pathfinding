@@ -22,10 +22,11 @@ namespace Pathfinding.Systems
         [BurstCompile]
         public void OnCreate(ref SystemState state)
         {
+            state.RequireForUpdate<PathRequestsSingleton>();
             _query = SystemAPI.QueryBuilder().WithAll<Pathfinder, PathBuffer>().Build();
 
             _navMeshWorld = NavMeshWorld.GetDefaultWorld();
-            _navMeshQuery = new(_navMeshWorld, Allocator.Persistent);
+            _navMeshQuery = new NavMeshQuery(_navMeshWorld, Allocator.Persistent);
 
             SystemAPI.GetSingletonRW<PathRequestsSingleton>();
         }
@@ -39,11 +40,11 @@ namespace Pathfinding.Systems
         [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
-            var pathRequests = SystemAPI.GetSingleton<PathRequestsSingleton>();
+            PathRequestsSingleton pathRequests = SystemAPI.GetSingleton<PathRequestsSingleton>();
 
             pathRequests.requests.Update();
 
-            state.Dependency = new FindPathJob()
+            state.Dependency = new FindPathJob
             {
                 pathRequests = pathRequests.requests.AsParallelWriter(),
                 navMeshQuery = _navMeshQuery,
@@ -61,31 +62,30 @@ namespace Pathfinding.Systems
             public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask,
                 in v128 chunkEnabledMask)
             {
-                var enumerator = new ChunkEntityEnumerator(useEnabledMask, chunkEnabledMask, chunk.Count);
+                ChunkEntityEnumerator enumerator = new(useEnabledMask, chunkEnabledMask, chunk.Count);
 
-                var findPaths = chunk.GetComponentDataPtrRW(ref findPathWriteHandle);
-                var mask = chunk.GetEnabledMask(ref findPathWriteHandle);
+                Pathfinder* findPaths = chunk.GetComponentDataPtrRW(ref findPathWriteHandle);
+                EnabledMask mask = chunk.GetEnabledMask(ref findPathWriteHandle);
 
-                while (enumerator.NextEntityIndex(out var i))
+                while (enumerator.NextEntityIndex(out int i))
                 {
-                    ref var findPath = ref findPaths[i];
+                    ref Pathfinder findPath = ref findPaths[i];
 
-                    ref var sourcePos = ref findPath.from;
-                    ref var targetPos = ref findPath.to;
-
+                    ref float3 sourcePos = ref findPath.from;
+                    ref float3 targetPos = ref findPath.to;
                     if (math.all(sourcePos == targetPos))
                     {
                         continue;
                     }
 
-                    var length = math.distancesq(sourcePos, targetPos);
+                    float length = math.distancesq(sourcePos, targetPos);
                     if (length <= findPath.requiredMinDistanceSq)
                     {
                         // don't destroy, WalkPathSystem needs to give control back
                         continue;
                     }
 
-                    var pathId = pathRequests.TryAdd(out var pathRequest);
+                    int pathId = pathRequests.TryAdd(out PathQuery* pathRequest);
 
                     if (pathId == 0)
                     {
@@ -99,11 +99,10 @@ namespace Pathfinding.Systems
                     // findPath.pathWalkerIndex = 0;
 
                     pathRequest->pathRequestId = pathId;
-                    pathRequest->from =
-                        navMeshQuery.MapLocation(sourcePos, new float3(10, 10, 10), findPath.agentId, 1 << 0);
-                    pathRequest->to =
-                        navMeshQuery.MapLocation(targetPos, new float3(10, 10, 10), findPath.agentId, 1 << 0);
+                    pathRequest->from = navMeshQuery.MapLocation(sourcePos, new float3(10, 10, 10), findPath.agentId, 1 << 0);
+                    pathRequest->to = navMeshQuery.MapLocation(targetPos, new float3(10, 10, 10), findPath.agentId, 1 << 0);
                     pathRequest->areaMask = 1 << 0;
+
                     // todo, actual danger, not setting this screws up every request afterwards
                     pathRequest->status = default;
 

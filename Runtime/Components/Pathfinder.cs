@@ -12,7 +12,6 @@ namespace Pathfinding.Components
 
         public int agentId;
 
-
         public int pathId;
 
         public PathQueryStatus pathStatus;
