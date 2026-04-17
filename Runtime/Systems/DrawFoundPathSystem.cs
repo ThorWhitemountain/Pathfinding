@@ -7,6 +7,7 @@ using Unity.Physics.Authoring;
 
 namespace Pathfinding.Systems
 {
+  #if UNITY_EDITOR
     [UpdateInGroup(typeof(PresentationSystemGroup))]
     public partial struct DrawFoundPathSystem : ISystem
     {
@@ -37,4 +38,5 @@ namespace Pathfinding.Systems
             }
         }
     }
+#endif
 }
