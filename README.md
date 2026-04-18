@@ -14,15 +14,12 @@ Specify agentID and minimal query distance and it's ready to be baked.
 
 ### Finding path
 
-To find a path you need to get `PathfinderAspect` 
-of relevant entity.
+To find a path you need to get the disabled Pathfinder component 
+of the relevant entity, update it's .to, .from, and clear its .pathstatus (set to 0).
 
-For example:
-```csharp
-var path = SystemAPI.GetAspect<PathfinderAspect>(entity);
-path.FindPath(pathFrom, pathTo);
-```
+Enable the pathfinder component, and wait.
 
-After query is done dynamic buffer `PathBuffer` will be filled with
-direct path position. `Pathfinder` component will also get it's
-`pathStatus` field updated.
+After pathfinding is done the `PathBuffer` dynamic buffer will be filled with
+direct path position. 
+
+`Pathfinder` component will also get it's `pathStatus` field updated, and be disabled. Which is useful for job filtering via [WithNone(typeof(Pathfinder))]
