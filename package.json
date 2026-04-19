@@ -2,7 +2,7 @@
   "name": "com.thorwhitemountain.pathfinding",
   "displayName": "Entities NavMesh Pathfinding",
   "description": "This package provides a tools to query Unity navmesh paths.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "unity": "6000.4",
   "unityRelease": "21f1",
   "dependencies": {

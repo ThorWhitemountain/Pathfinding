@@ -1,5 +1,17 @@
 # Change Log:
 
+## 0.6.1
+
+### Changed
+
+- Uses a queue of indices in order to control access to the navMeshQueries needed for pathfinding.
+  - Allowing the system to limit the number of pathfinding entities during any one frame, as well as preventing query reuse/overwriting
+  - Default Limit is 16 at the moment.
+
+### Fixed
+
+- There can be more than 10 pathfinding entities at one time without throwing errors.
+
 ## 0.6.0
 
 - All pointers and unsafe code blocks have been removed

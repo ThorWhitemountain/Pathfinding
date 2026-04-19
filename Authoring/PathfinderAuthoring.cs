@@ -27,7 +27,8 @@ namespace Pathfinding.Authoring
                     requiredMinDistanceSq = math.pow(authoring.minDistance, 2),
                     agentId = NavMesh.GetSettingsByIndex(authoring.agentId).agentTypeID,
                     useFunnel = authoring.useFunnel,
-                    pathStatus = 0
+                    pathStatus = 0,
+                    queryIndex = -1
                 });
                 SetComponentEnabled<Pathfinder>(entity, false);
 

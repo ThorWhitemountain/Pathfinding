@@ -15,7 +15,12 @@ namespace Pathfinding.Systems
     public partial struct PathfinderSystem : ISystem
     {
         private NavMeshWorld _navMeshWorld;
+
         private NativeArray<NavMeshQuery> _navMeshQueries;
+
+        // used to connect entities to NavmeshQueries
+        private NativeQueue<int> _availableIndices;
+        private const int MaxConcurrentPaths = 16;
 
         private EntityQuery pathfindingQ;
 
@@ -27,12 +32,13 @@ namespace Pathfinding.Systems
 
             state.RequireForUpdate<BeginInitializationEntityCommandBufferSystem.Singleton>();
             _navMeshWorld = NavMeshWorld.GetDefaultWorld();
-            int maxWorkers = JobsUtility.JobWorkerMaximumCount;
-            _navMeshQueries = new NativeArray<NavMeshQuery>(maxWorkers, Allocator.Persistent);
+            _navMeshQueries = new NativeArray<NavMeshQuery>(MaxConcurrentPaths, Allocator.Persistent);
+            _availableIndices = new NativeQueue<int>(Allocator.Persistent);
 
-            for (int i = 0; i < maxWorkers; i++)
+            for (int i = 0; i < MaxConcurrentPaths; i++)
             {
                 _navMeshQueries[i] = new NavMeshQuery(_navMeshWorld, Allocator.Persistent, 4096);
+                _availableIndices.Enqueue(i);
             }
         }
 
@@ -57,28 +63,38 @@ namespace Pathfinding.Systems
             EntityCommandBuffer.ParallelWriter ecb = SystemAPI.GetSingleton<BeginInitializationEntityCommandBufferSystem.Singleton>()
                 .CreateCommandBuffer(state.WorldUnmanaged).AsParallelWriter();
 
-            PathProcessorJob job = new()
+            InitJob initJob = new()
             {
-                Queries = _navMeshQueries,
-                MaxIterations = 100,
+                queries = _navMeshQueries,
+                availableIndices = _availableIndices
+            };
+            state.Dependency = initJob.Schedule(pathfindingQ, state.Dependency);
+
+            PathProcessorJob processorJob = new()
+            {
+                queries = _navMeshQueries,
+                availableIndices = _availableIndices.AsParallelWriter(),
+                maxIterations = 100,
                 ecb = ecb
             };
-            state.Dependency = job.ScheduleParallel(pathfindingQ, state.Dependency);
+            state.Dependency = processorJob.ScheduleParallel(pathfindingQ, state.Dependency);
         }
 
         [BurstCompile]
-        public partial struct PathProcessorJob : IJobEntity
+        public partial struct InitJob : IJobEntity
         {
             [NativeDisableContainerSafetyRestriction]
-            public NativeArray<NavMeshQuery> Queries;
+            public NativeArray<NavMeshQuery> queries;
 
-            public int MaxIterations;
+            public NativeQueue<int> availableIndices;
 
-            public EntityCommandBuffer.ParallelWriter ecb;
-
-            private void Execute(Entity entity, ref Pathfinder pathfinder, DynamicBuffer<PathBuffer> pathBuffer)
+            private void Execute(Entity entity, [EntityIndexInQuery] int queryIndex, ref Pathfinder pathfinder)
             {
-                NavMeshQuery query = Queries[JobsUtility.ThreadIndex];
+                if (pathfinder.queryIndex != -1)
+                {
+                    // Debug.Log("Already have a query!");
+                    return;
+                }
 
                 ref float3 sourcePos = ref pathfinder.from;
                 ref float3 targetPos = ref pathfinder.to;
@@ -93,29 +109,88 @@ namespace Pathfinding.Systems
                     return;
                 }
 
-                // Debug.Log($"Status: {pathfinder.pathStatus}");
+                // Already in progress!
+                if (pathfinder.pathStatus != 0)
+                {
+                    // Debug.Log("Uh oh, would've gotten a new query even though im already in progress!");
+                    return;
+                }
 
+                if (math.distancesq(pathfinder.from, pathfinder.to) < pathfinder.requiredMinDistanceSq)
+                {
+                    return;
+                }
+
+                if (!availableIndices.TryDequeue(out int availableIndex))
+                {
+                    // Debug.Log("No queries available!");
+                    return;
+                }
+
+                NavMeshQuery query = queries[availableIndex];
+                pathfinder.fromLocation = query.MapLocation(pathfinder.from, new float3(10), pathfinder.agentId);
+                pathfinder.toLocation = query.MapLocation(pathfinder.to, new float3(10), pathfinder.agentId);
+
+                if (query.IsValid(pathfinder.fromLocation) && query.IsValid(pathfinder.toLocation))
+                {
+                    // Debug.Log($"Using query at index: {availableIndex} -- Entity: {entity.ToFixedString()}");
+                    pathfinder.queryIndex = queryIndex;
+                    pathfinder.pathStatus = query.BeginFindPath(pathfinder.fromLocation, pathfinder.toLocation);
+                }
+                else
+                {
+                    // Debug.Log("Invalid query! returning!");
+
+                    availableIndices.Enqueue(availableIndex);
+                    pathfinder.queryIndex = -1;
+                }
+            }
+        }
+
+        [BurstCompile]
+        public partial struct PathProcessorJob : IJobEntity
+        {
+            [NativeDisableContainerSafetyRestriction]
+            public NativeArray<NavMeshQuery> queries;
+
+            public NativeQueue<int>.ParallelWriter availableIndices;
+
+            public int maxIterations;
+
+            public EntityCommandBuffer.ParallelWriter ecb;
+
+            private void Execute(Entity entity, ref Pathfinder pathfinder, DynamicBuffer<PathBuffer> pathBuffer)
+            {
                 // New Request Logic
                 if (pathfinder.pathStatus == 0)
                 {
-                    if (math.distancesq(pathfinder.from, pathfinder.to) > pathfinder.requiredMinDistanceSq)
+                    if (pathfinder.queryIndex == -1)
                     {
-                        pathfinder.fromLocation = query.MapLocation(pathfinder.from, new float3(10), pathfinder.agentId);
-                        pathfinder.toLocation = query.MapLocation(pathfinder.to, new float3(10), pathfinder.agentId);
-
-                        if (query.IsValid(pathfinder.fromLocation) && query.IsValid(pathfinder.toLocation))
-                        {
-                            pathfinder.pathStatus = query.BeginFindPath(pathfinder.fromLocation, pathfinder.toLocation);
-                        }
+                        // Debug.Log("shouldn't be pathfinding! (waiting for init Job)");
+                        return;
                     }
 
+                    // Debug.Log($"Returning index: {pathfinder.queryIndex} -- Entity: {entity.ToFixedString()}");
+
+                    //"Give back" the navmeshQuery, and mark ourselves as invalid
+                    availableIndices.Enqueue(pathfinder.queryIndex);
+                    pathfinder.queryIndex = -1;
                     return;
                 }
+
+                if (pathfinder.queryIndex == -1)
+                {
+                    // Debug.Log("Not initialized yet!");
+                    return;
+                }
+
+                // Debug.Log($"Getting query at index: {pathfinder.queryIndex}");
+                NavMeshQuery query = queries[pathfinder.queryIndex];
 
                 // Iterative Update
                 if (pathfinder.pathStatus == PathQueryStatus.InProgress)
                 {
-                    pathfinder.pathStatus = query.UpdateFindPath(MaxIterations, out int _);
+                    pathfinder.pathStatus = query.UpdateFindPath(maxIterations, out int _);
                 }
 
                 // 3. Success & Funnel (Straight Path)
@@ -126,10 +201,10 @@ namespace Pathfinding.Systems
                     NativeArray<PolygonId> polygons = new(pathLength, Allocator.Temp);
                     query.GetPathResult(polygons);
 
-                    //todo no +1
                     PathQueryStatus status = PathQueryStatus.Success;
                     if (pathfinder.useFunnel)
                     {
+                        //todo no +1
                         const int PathMaxSize = 512;
                         NativeArray<NavMeshLocation> straightPath = new(pathLength + 1, Allocator.Temp);
                         NativeArray<StraightPathFlags> straightPathFlags = new(PathMaxSize, Allocator.Temp);
@@ -196,15 +271,18 @@ namespace Pathfinding.Systems
                         pathBuffer.Add(new PathBuffer { position = pathfinder.toLocation.position });
                     }
 
-                    // Debug.Log($"Found path! pathLength: {pathLength} , reduced length: {pathBuffer.Length}");
-                    // Reset status to allow the next logic / movement system to take over
-                    // or to allow a re-path if the target moves again.
-                    // pathfinder.pathStatus = 0;
-                    pathfinder.pathStatus = status;
+                    // Reset status to allow the next logic / movement system to take over or to allow a re-path if the target moves again.
+                    // pathfinder.pathStatus = 0; //todo ??
+                    pathfinder.pathStatus = status; //todo ??
+
+                    //"Give back" the navmeshQuery, and mark ourselves as invalid
+                    // Debug.Log($"Returning index: {pathfinder.queryIndex} -- Entity: {entity.ToFixedString()}");
+                    availableIndices.Enqueue(pathfinder.queryIndex);
+                    pathfinder.queryIndex = -1;
+
                     ecb.SetComponentEnabled<Pathfinder>(JobsUtility.ThreadIndex, entity, false);
                 }
             }
-
 
             private const int PathMaxSize = 512;
 
@@ -421,8 +499,7 @@ namespace Pathfinding.Systems
                 (a, b) = (b, a);
             }
 
-            private static void SegmentSegmentCpa(out float3 c0, out float3 c1, float3 p0, float3 p1, float3 q0,
-                float3 q1)
+            private static void SegmentSegmentCpa(out float3 c0, out float3 c1, float3 p0, float3 p1, float3 q0, float3 q1)
             {
                 float3 u = p1 - p0;
                 float3 v = q1 - q0;
