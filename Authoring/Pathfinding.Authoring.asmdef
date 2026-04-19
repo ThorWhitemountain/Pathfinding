@@ -1,21 +1,20 @@
 {
-  "name": "Pathfinding.Authoring",
-  "rootNamespace": "Pathfinding.Authoring",
-  "references": [
-    "Unity.Entities",
-    "Unity.Entities.Hybrid",
-    "Unity.Mathematics",
-    "NZCore.Pathfinding",
-    "Unity.Collections",
-    "Pathfinding"
-  ],
-  "includePlatforms": [],
-  "excludePlatforms": [],
-  "allowUnsafeCode": true,
-  "overrideReferences": false,
-  "precompiledReferences": [],
-  "autoReferenced": true,
-  "defineConstraints": [],
-  "versionDefines": [],
-  "noEngineReferences": false
+    "name": "Pathfinding.Authoring",
+    "rootNamespace": "Pathfinding.Authoring",
+    "references": [
+        "Unity.Entities",
+        "Unity.Entities.Hybrid",
+        "Unity.Mathematics",
+        "Unity.Collections",
+        "Pathfinding"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
 }

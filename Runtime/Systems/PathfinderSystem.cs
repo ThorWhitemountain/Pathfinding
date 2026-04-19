@@ -1,12 +1,9 @@
-﻿using System;
-using Pathfinding.Components;
-using Pathfinding.Data;
-using Pathfinding.Utility;
+﻿using Pathfinding.Components;
+using System;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
-using Unity.Jobs;
 using Unity.Jobs.LowLevel.Unsafe;
 using Unity.Mathematics;
 using UnityEngine;
@@ -14,250 +11,202 @@ using UnityEngine.Experimental.AI;
 
 namespace Pathfinding.Systems
 {
-    [UpdateInGroup(typeof(PathfindingSystemGroup))]
-    [UpdateAfter(typeof(FindPathSystem))]
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct PathfinderSystem : ISystem
     {
-        private unsafe struct PathQueryPtr
-        {
-            public PathQuery* pathQuery;
-        }
-
-        private const int QueryMaxCount = 100;
-        private const int PathMaxSize = 512;
-        private const int MaxPathQueueNodes = 4096;
-
         private NavMeshWorld _navMeshWorld;
-        private NativeArray<NavMeshQuery> _queries;
+        private NativeArray<NavMeshQuery> _navMeshQueries;
 
-        private NativeWorkQueue<PathQuery> _pathRequests; // only for alloc/dispose
-        private NativeArray<PathQueryPtr> _inProgress;
+        private EntityQuery pathfindingQ;
 
-        private NativeParallelHashMap<int, PathQueryResult> _pathResults; // only for alloc/dispose
-
-        [BurstCompile]
-        public unsafe void OnCreate(ref SystemState state)
+        public void OnCreate(ref SystemState state)
         {
-            state.RequireForUpdate<PathResultsSingleton>();
-            state.RequireForUpdate<PathRequestsSingleton>();
+            pathfindingQ = new EntityQueryBuilder(state.WorldUpdateAllocator)
+                .WithAllRW<Pathfinder, PathBuffer>()
+                .Build(state.EntityManager);
+
+            state.RequireForUpdate<BeginInitializationEntityCommandBufferSystem.Singleton>();
             _navMeshWorld = NavMeshWorld.GetDefaultWorld();
-
-            _pathRequests = new NativeWorkQueue<PathQuery>(QueryMaxCount, Allocator.Persistent);
-            _inProgress = new NativeArray<PathQueryPtr>(QueryMaxCount, Allocator.Persistent);
-
-            _pathResults = new NativeParallelHashMap<int, PathQueryResult>(QueryMaxCount, Allocator.Persistent);
-
-            for (int i = 0; i < QueryMaxCount; i++)
-            {
-                ref PathQuery entry = ref _pathRequests.ElementAt(i);
-                entry.path = (NavMeshLocation*)UnsafeUtility.Malloc(
-                    UnsafeUtility.SizeOf<NavMeshLocation>() * PathMaxSize, UnsafeUtility.AlignOf<NavMeshLocation>(),
-                    Allocator.Persistent);
-                entry.status = 0;
-
-                _inProgress[i] = new PathQueryPtr
-                {
-                    pathQuery = null
-                };
-            }
-
-            state.EntityManager.AddComponentData(state.SystemHandle, new PathRequestsSingleton
-            {
-                requests = _pathRequests
-            });
-            state.EntityManager.AddComponentData(state.SystemHandle, new PathResultsSingleton
-            {
-                results = _pathResults
-            });
-
             int maxWorkers = JobsUtility.JobWorkerMaximumCount;
-            _queries = new NativeArray<NavMeshQuery>(maxWorkers, Allocator.Persistent);
+            _navMeshQueries = new NativeArray<NavMeshQuery>(maxWorkers, Allocator.Persistent);
 
             for (int i = 0; i < maxWorkers; i++)
             {
-                _queries[i] = new NavMeshQuery(_navMeshWorld, Allocator.Persistent, MaxPathQueueNodes);
+                _navMeshQueries[i] = new NavMeshQuery(_navMeshWorld, Allocator.Persistent, 4096);
             }
-
-            SystemAPI.GetSingletonRW<PathResultsSingleton>();
         }
 
-        [BurstCompile]
-        public unsafe void OnDestroy(ref SystemState state)
+        public void OnDestroy(ref SystemState state)
         {
-            for (int i = 0; i < QueryMaxCount; i++)
+            if (!_navMeshQueries.IsCreated)
             {
-                UnsafeUtility.Free(_pathRequests.ElementAt(i).path, Allocator.Persistent);
+                return;
             }
 
-            _pathRequests.Dispose();
-
-            for (int i = 0; i < _queries.Length; i++)
+            for (int i = 0; i < _navMeshQueries.Length; i++)
             {
-                _queries[i].Dispose();
+                _navMeshQueries[i].Dispose();
             }
 
-            _queries.Dispose();
-
-            _pathResults.Dispose();
-            _inProgress.Dispose();
+            _navMeshQueries.Dispose();
         }
 
         [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
-            PathRequestsSingleton requests = SystemAPI.GetSingleton<PathRequestsSingleton>();
-            PathResultsSingleton results = SystemAPI.GetSingleton<PathResultsSingleton>();
+            EntityCommandBuffer.ParallelWriter ecb = SystemAPI.GetSingleton<BeginInitializationEntityCommandBufferSystem.Singleton>()
+                .CreateCommandBuffer(state.WorldUnmanaged).AsParallelWriter();
 
-            JobHandle clearHandle = new ClearResultsHashMap
+            PathProcessorJob job = new()
             {
-                results = results.results
-            }.Schedule(state.Dependency);
-
-            state.Dependency = new ProcessQueues
-            {
-                maxIterations = 4096,
-                navMeshQueries = _queries,
-                pathRequests = requests.requests.AsParallelReader(),
-                inProgress = _inProgress,
-                results = results.results.AsParallelWriter()
-            }.Schedule(JobsUtility.JobWorkerCount, clearHandle);
+                Queries = _navMeshQueries,
+                MaxIterations = 100,
+                ecb = ecb
+            };
+            state.Dependency = job.ScheduleParallel(pathfindingQ, state.Dependency);
         }
 
         [BurstCompile]
-        private struct ClearResultsHashMap : IJob
+        public partial struct PathProcessorJob : IJobEntity
         {
-            public NativeParallelHashMap<int, PathQueryResult> results;
+            [NativeDisableContainerSafetyRestriction]
+            public NativeArray<NavMeshQuery> Queries;
 
-            public void Execute()
+            public int MaxIterations;
+
+            public EntityCommandBuffer.ParallelWriter ecb;
+
+            private void Execute(Entity entity, ref Pathfinder pathfinder, DynamicBuffer<PathBuffer> pathBuffer)
             {
-                results.Clear();
-            }
-        }
+                NavMeshQuery query = Queries[JobsUtility.ThreadIndex];
 
-        [BurstCompile]
-        private unsafe struct ProcessQueues : IJobFor
-        {
-            public int maxIterations;
-
-            [ReadOnly] [NativeDisableContainerSafetyRestriction]
-            public NativeArray<NavMeshQuery> navMeshQueries;
-
-            public NativeWorkQueue<PathQuery>.ParallelReader pathRequests;
-            public NativeArray<PathQueryPtr> inProgress;
-
-            public NativeParallelHashMap<int, PathQueryResult>.ParallelWriter results;
-
-            public void Execute(int index)
-            {
-                int iterCount = maxIterations;
-                NavMeshQuery navMeshQuery = navMeshQueries[index];
-
-                PathQueryPtr* ptr = (PathQueryPtr*)inProgress.GetUnsafePtr();
-                ref PathQueryPtr element = ref UnsafeUtility.AsRef<PathQueryPtr>(ptr + index);
-
-                if (element.pathQuery != null)
+                ref float3 sourcePos = ref pathfinder.from;
+                ref float3 targetPos = ref pathfinder.to;
+                if (math.all(sourcePos == targetPos))
                 {
-                    ref PathQuery previousQuery = ref *element.pathQuery;
+                    return;
+                }
 
-                    if (!ProcessElement(ref previousQuery, ref navMeshQuery, ref iterCount))
+                float length = math.distancesq(sourcePos, targetPos);
+                if (length <= pathfinder.requiredMinDistanceSq)
+                {
+                    return;
+                }
+
+                // Debug.Log($"Status: {pathfinder.pathStatus}");
+
+                // New Request Logic
+                if (pathfinder.pathStatus == 0)
+                {
+                    if (math.distancesq(pathfinder.from, pathfinder.to) > pathfinder.requiredMinDistanceSq)
                     {
-                        // Didn't finish processing the work
-                        return;
+                        pathfinder.fromLocation = query.MapLocation(pathfinder.from, new float3(10), pathfinder.agentId);
+                        pathfinder.toLocation = query.MapLocation(pathfinder.to, new float3(10), pathfinder.agentId);
+
+                        if (query.IsValid(pathfinder.fromLocation) && query.IsValid(pathfinder.toLocation))
+                        {
+                            pathfinder.pathStatus = query.BeginFindPath(pathfinder.fromLocation, pathfinder.toLocation);
+                        }
                     }
+
+                    return;
                 }
 
-                //ref var previousQuery = ref InProgress.ElementAt(index);
-
-                if (pathRequests.TryGetNext(out PathQuery* pathQuery))
+                // Iterative Update
+                if (pathfinder.pathStatus == PathQueryStatus.InProgress)
                 {
-                    if (!ProcessElement(ref *pathQuery, ref navMeshQuery, ref iterCount))
+                    pathfinder.pathStatus = query.UpdateFindPath(MaxIterations, out int _);
+                }
+
+                // 3. Success & Funnel (Straight Path)
+                if (pathfinder.pathStatus == PathQueryStatus.Success)
+                {
+                    pathfinder.pathStatus = query.EndFindPath(out int pathLength);
+
+                    NativeArray<PolygonId> polygons = new(pathLength, Allocator.Temp);
+                    query.GetPathResult(polygons);
+
+                    //todo no +1
+                    PathQueryStatus status = PathQueryStatus.Success;
+                    if (pathfinder.useFunnel)
                     {
-                        // Didn't finish processing the work, store it for later
-                        inProgress[pathQuery->pathRequestId] = new PathQueryPtr { pathQuery = pathQuery };
-                        return;
-                    }
-                }
-
-
-                element.pathQuery = null;
-            }
-
-            // True if we should continue processing
-            private bool ProcessElement(ref PathQuery query, ref NavMeshQuery navMeshQuery, ref int iterCount)
-            {
-                if (iterCount <= 0)
-                {
-                    return false;
-                }
-
-                bool result = Process(ref query, ref navMeshQuery, ref iterCount);
-                if (!result)
-                {
-                    return false;
-                }
-
-                // Write our result
-                //Debug.Log($"Write path results from id {query.PathRequestId} length {query.PathLength}");
-                results.TryAdd(query.pathRequestId, new PathQueryResult
-                {
-                    status = query.status,
-                    path = query.path,
-                    pathLength = query.pathLength
-                });
-                //Check.Assume(added);
-                return true;
-            }
-
-            private bool Process(ref PathQuery query, ref NavMeshQuery navMeshQuery, ref int iterCount)
-            {
-                // Handle query start.
-                if (query.status == 0)
-                {
-                    query.status = navMeshQuery.BeginFindPath(query.from, query.to);
-                }
-
-                switch (query.status)
-                {
-                    // Handle query in progress.
-                    case PathQueryStatus.InProgress:
-                        query.status = navMeshQuery.UpdateFindPath(iterCount, out int iterationsPerformed);
-                        iterCount -= iterationsPerformed;
-                        return false;
-                    // Check query complete
-                    case PathQueryStatus.Success:
-                    {
-                        navMeshQuery.EndFindPath(out int pathLength);
-
-                        NativeArray<PolygonId> polygons = new(pathLength, Allocator.Temp);
-                        navMeshQuery.GetPathResult(polygons);
-
+                        const int PathMaxSize = 512;
+                        NativeArray<NavMeshLocation> straightPath = new(pathLength + 1, Allocator.Temp);
                         NativeArray<StraightPathFlags> straightPathFlags = new(PathMaxSize, Allocator.Temp);
                         NativeArray<float> vertexSide = new(PathMaxSize, Allocator.Temp);
 
                         int cornerCount = 0;
 
-                        query.status = FindStraightPath(ref navMeshQuery,
-                            query.from.position,
-                            query.to.position,
+                        //todo profilermarker
+
+                        status = FindStraightPath(
+                            ref query,
+                            pathfinder.fromLocation.position,
+                            pathfinder.toLocation.position,
                             pathLength,
                             polygons,
-                            query.path,
+                            ref straightPath,
                             ref straightPathFlags,
                             ref vertexSide,
                             ref cornerCount
                         );
 
-                        query.pathLength = cornerCount;
+                        pathBuffer.Clear();
+                        if (status == PathQueryStatus.Failure)
+                        {
+                            // Debug.Log("Failure to find path!");
+                            return;
+                        }
 
-                        return true;
+                        for (int i = 0; i < straightPath.Length; i++)
+                        {
+                            bool3 equal = straightPath[i].position == new Vector3(0, 0, 0);
+                            if (math.all(equal))
+                            {
+                                // Debug.Log("Corrupt Path part!");
+                                continue;
+                            }
+
+                            pathBuffer.Add(new PathBuffer { position = straightPath[i].position });
+                        }
                     }
-                    // We've still finished, we just failed in our query
-                    case PathQueryStatus.Failure:
-                        //Debug.Log($"PathQueryStatus.Failure id {query.PathRequestId}");
-                        return true;
-                    default: return false;
+                    else
+                    {
+                        pathBuffer.Add(new PathBuffer { position = pathfinder.fromLocation.position });
+
+                        for (int i = 0; i < (pathLength - 1); i++)
+                        {
+                            // Get the shared edge (portal) between current polygon and next
+                            query.GetPortalPoints(polygons[i], polygons[i + 1], out Vector3 left, out Vector3 right);
+
+                            // Funnel Logic:
+                            // This is where you would traditionally narrow your 'left' and 'right' 
+                            // bounds. For a simple approximation, you can use the portal center:
+                            float3 portalCenter = (left + right) * 0.5f;
+                            bool3 equal = portalCenter == float3.zero;
+                            if (math.all(equal))
+                            {
+                                // Debug.Log("Corrupt Path part!");
+                                continue;
+                            }
+
+                            pathBuffer.Add(new PathBuffer { position = portalCenter });
+                        }
+
+                        pathBuffer.Add(new PathBuffer { position = pathfinder.toLocation.position });
+                    }
+
+                    // Debug.Log($"Found path! pathLength: {pathLength} , reduced length: {pathBuffer.Length}");
+                    // Reset status to allow the next logic / movement system to take over
+                    // or to allow a re-path if the target moves again.
+                    // pathfinder.pathStatus = 0;
+                    pathfinder.pathStatus = status;
+                    ecb.SetComponentEnabled<Pathfinder>(JobsUtility.ThreadIndex, entity, false);
                 }
             }
+
+
+            private const int PathMaxSize = 512;
 
             private static PathQueryStatus FindStraightPath(
                 ref NavMeshQuery query,
@@ -265,7 +214,7 @@ namespace Pathfinding.Systems
                 float3 endPos,
                 int pathSize,
                 NativeArray<PolygonId> polygons,
-                NavMeshLocation* straightPath,
+                ref NativeArray<NavMeshLocation> straightPath,
                 ref NativeArray<StraightPathFlags> straightPathFlags,
                 ref NativeArray<float> vertexSide,
                 ref int straightPathCount)
@@ -288,8 +237,8 @@ namespace Pathfinding.Systems
                     Matrix4x4 startPolyWorldToLocal = query.PolygonWorldToLocalMatrix(polygons[0]);
 
                     float3 apex = startPolyWorldToLocal.MultiplyPoint(startPos);
-                    float3 left = new(0, 0,
-                        0); // Vector3.zero accesses a static readonly which does not work in burst yet
+                    // Vector3.zero accesses a static readonly which does not work in burst yet
+                    float3 left = new(0, 0, 0);
                     float3 right = new(0, 0, 0);
                     int leftIndex = -1;
                     int rightIndex = -1;
@@ -332,7 +281,7 @@ namespace Pathfinding.Systems
                             Matrix4x4 polyLocalToWorld = query.PolygonLocalToWorldMatrix(polygons[apexIndex]);
                             Vector3 termPos = polyLocalToWorld.MultiplyPoint(apex + left);
 
-                            n = RetracePortals(ref query, apexIndex, leftIndex, n, termPos, polygons, straightPath,
+                            n = RetracePortals(ref query, apexIndex, leftIndex, n, termPos, polygons, ref straightPath,
                                 ref straightPathFlags);
                             if (vertexSide.Length > 0)
                             {
@@ -359,7 +308,7 @@ namespace Pathfinding.Systems
                             Matrix4x4 polyLocalToWorld = query.PolygonLocalToWorldMatrix(polygons[apexIndex]);
                             Vector3 termPos = polyLocalToWorld.MultiplyPoint(apex + right);
 
-                            n = RetracePortals(ref query, apexIndex, rightIndex, n, termPos, polygons, straightPath,
+                            n = RetracePortals(ref query, apexIndex, rightIndex, n, termPos, polygons, ref straightPath,
                                 ref straightPathFlags);
                             if (vertexSide.Length > 0)
                             {
@@ -396,14 +345,14 @@ namespace Pathfinding.Systems
                     }
                 }
 
-                // Remove the the next to last if duplicate point - e.g. start and end positions are the same
-                // (in which case we have get a single point)
+                // Remove the next to last if duplicate point
+                // - e.g., start and end positions are the same (in which case we have got a single point)
                 if (n > 0 && math.all((float3)straightPath[n - 1].position == endPos))
                 {
                     n--;
                 }
 
-                n = RetracePortals(ref query, apexIndex, pathSize - 1, n, endPos, polygons, straightPath,
+                n = RetracePortals(ref query, apexIndex, pathSize - 1, n, endPos, polygons, ref straightPath,
                     ref straightPathFlags);
                 if (vertexSide.Length > 0)
                 {
@@ -430,7 +379,7 @@ namespace Pathfinding.Systems
                 int n,
                 float3 termPos,
                 NativeArray<PolygonId> path,
-                NavMeshLocation* straightPath,
+                ref NativeArray<NavMeshLocation> straightPath,
                 ref NativeArray<StraightPathFlags> straightPathFlags)
             {
                 for (int k = startIndex; k < (endIndex - 1); ++k)

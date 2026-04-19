@@ -1,24 +1,23 @@
 {
-  "name": "Pathfinding",
-  "rootNamespace": "Pathfinding",
-  "references": [
-    "Unity.Entities",
-    "Unity.Entities.Hybrid",
-    "Unity.Burst",
-    "Unity.Collections",
-    "Unity.AI.Navigation",
-    "Unity.Mathematics",
-    "Unity.Transforms",
-    "Unity.Physics.Hybrid",
-    "NZCore"
-  ],
-  "includePlatforms": [],
-  "excludePlatforms": [],
-  "allowUnsafeCode": true,
-  "overrideReferences": false,
-  "precompiledReferences": [],
-  "autoReferenced": true,
-  "defineConstraints": [],
-  "versionDefines": [],
-  "noEngineReferences": false
+    "name": "Pathfinding",
+    "rootNamespace": "Pathfinding",
+    "references": [
+        "Unity.Entities",
+        "Unity.Entities.Hybrid",
+        "Unity.Burst",
+        "Unity.Collections",
+        "Unity.AI.Navigation",
+        "Unity.Mathematics",
+        "Unity.Transforms",
+        "Unity.Physics.Hybrid"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
 }
