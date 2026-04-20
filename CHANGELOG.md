@@ -1,12 +1,18 @@
 # Change Log:
 
+## 0.6.2
+
+### Changed
+
+- Reduce memory usage of the Pathfinder component with 20 bytes. (88 bytes -> 68 bytes)
+
 ## 0.6.1
 
 ### Changed
 
-- Uses a queue of indices in order to control access to the navMeshQueries needed for pathfinding.
+- Uses a queue of indices to control access to the navMeshQueries needed for pathfinding.
   - Allowing the system to limit the number of pathfinding entities during any one frame, as well as preventing query reuse/overwriting
-  - Default Limit is 16 at the moment.
+  - The default limit is 16 at the moment.
 
 ### Fixed
 

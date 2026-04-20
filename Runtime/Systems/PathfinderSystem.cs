@@ -128,14 +128,17 @@ namespace Pathfinding.Systems
                 }
 
                 NavMeshQuery query = queries[availableIndex];
-                pathfinder.fromLocation = query.MapLocation(pathfinder.from, new float3(10), pathfinder.agentId);
-                pathfinder.toLocation = query.MapLocation(pathfinder.to, new float3(10), pathfinder.agentId);
+                NavMeshLocation fromLocation = query.MapLocation(pathfinder.from, new float3(10), pathfinder.agentId);
+                NavMeshLocation toLocation = query.MapLocation(pathfinder.to, new float3(10), pathfinder.agentId);
 
-                if (query.IsValid(pathfinder.fromLocation) && query.IsValid(pathfinder.toLocation))
+                if (query.IsValid(fromLocation) && query.IsValid(toLocation))
                 {
                     // Debug.Log($"Using query at index: {availableIndex} -- Entity: {entity.ToFixedString()}");
                     pathfinder.queryIndex = queryIndex;
-                    pathfinder.pathStatus = query.BeginFindPath(pathfinder.fromLocation, pathfinder.toLocation);
+                    pathfinder.pathStatus = query.BeginFindPath(fromLocation, toLocation);
+
+                    pathfinder.fromLocation = fromLocation.position;
+                    pathfinder.toLocation = toLocation.position;
                 }
                 else
                 {
@@ -216,8 +219,8 @@ namespace Pathfinding.Systems
 
                         status = FindStraightPath(
                             ref query,
-                            pathfinder.fromLocation.position,
-                            pathfinder.toLocation.position,
+                            pathfinder.fromLocation,
+                            pathfinder.toLocation,
                             pathLength,
                             polygons,
                             ref straightPath,
@@ -247,7 +250,7 @@ namespace Pathfinding.Systems
                     }
                     else
                     {
-                        pathBuffer.Add(new PathBuffer { position = pathfinder.fromLocation.position });
+                        pathBuffer.Add(new PathBuffer { position = pathfinder.fromLocation });
 
                         for (int i = 0; i < (pathLength - 1); i++)
                         {
@@ -268,7 +271,7 @@ namespace Pathfinding.Systems
                             pathBuffer.Add(new PathBuffer { position = portalCenter });
                         }
 
-                        pathBuffer.Add(new PathBuffer { position = pathfinder.toLocation.position });
+                        pathBuffer.Add(new PathBuffer { position = pathfinder.toLocation });
                     }
 
                     // Reset status to allow the next logic / movement system to take over or to allow a re-path if the target moves again.
