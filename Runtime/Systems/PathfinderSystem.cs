@@ -37,7 +37,7 @@ namespace Pathfinding.Systems
 
             for (int i = 0; i < MaxConcurrentPaths; i++)
             {
-                _navMeshQueries[i] = new NavMeshQuery(_navMeshWorld, Allocator.Persistent, 4096);
+                _navMeshQueries[i] = new NavMeshQuery(_navMeshWorld, Allocator.Persistent, 65_535);
                 _availableIndices.Enqueue(i);
             }
         }
