@@ -1,5 +1,15 @@
 # Change Log:
 
+## 0.6.3
+
+### Changed
+
+- Upped max nodecount for navmeshqueries from 4096 nodes to 65535 to allow for longer paths
+
+### Fixed
+
+- Pathfinder Entities were getting incorrect paths, as they were using wrong index lookup for their navmeshqueries.
+
 ## 0.6.2
 
 ### Changed

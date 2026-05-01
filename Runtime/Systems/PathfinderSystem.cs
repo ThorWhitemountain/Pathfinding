@@ -88,7 +88,7 @@ namespace Pathfinding.Systems
 
             public NativeQueue<int> availableIndices;
 
-            private void Execute(Entity entity, [EntityIndexInQuery] int queryIndex, ref Pathfinder pathfinder)
+            private void Execute(ref Pathfinder pathfinder)
             {
                 if (pathfinder.queryIndex != -1)
                 {
@@ -134,7 +134,7 @@ namespace Pathfinding.Systems
                 if (query.IsValid(fromLocation) && query.IsValid(toLocation))
                 {
                     // Debug.Log($"Using query at index: {availableIndex} -- Entity: {entity.ToFixedString()}");
-                    pathfinder.queryIndex = queryIndex;
+                    pathfinder.queryIndex = availableIndex;
                     pathfinder.pathStatus = query.BeginFindPath(fromLocation, toLocation);
 
                     pathfinder.fromLocation = fromLocation.position;
