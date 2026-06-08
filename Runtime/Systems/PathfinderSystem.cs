@@ -44,6 +44,11 @@ namespace Pathfinding.Systems
 
         public void OnDestroy(ref SystemState state)
         {
+            if (_availableIndices.IsCreated)
+            {
+                _availableIndices.Dispose();
+            }
+
             if (!_navMeshQueries.IsCreated)
             {
                 return;

@@ -1,5 +1,11 @@
 # Change Log:
 
+## 0.6.4
+
+### Fixed
+
+- Minor memory leak in pathfindersystem. 
+
 ## 0.6.3
 
 ### Changed
