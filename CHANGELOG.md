@@ -1,5 +1,11 @@
 # Change Log:
 
+## 0.6.5
+
+### Fixed
+
+- Swap to Debug.Drawline for debug lines for Unity 6.5 compatiblity.
+
 ## 0.6.4
 
 ### Fixed

@@ -4,6 +4,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Physics.Authoring;
+using UnityEngine;
 
 namespace Pathfinding.Systems
 {
@@ -33,7 +34,7 @@ namespace Pathfinding.Systems
                 {
                     float3 pos = pathArray[i];
                     float3 nextPos = pathArray[i + 1];
-                    PhysicsDebugDisplaySystem.Line(pos, nextPos, Unity.DebugDisplay.ColorIndex.Green);
+                    Debug.DrawLine(pos, nextPos, Color.green);
                 }
             }
         }
